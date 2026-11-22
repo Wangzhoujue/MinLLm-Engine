@@ -34,7 +34,7 @@ engine/
 ├── request.py            # 请求状态机：WAITING → RUNNING → FINISHED / ABORTED
 ├── scheduler.py          # 请求队列与批组装（待实现）
 ├── sampling/
-│   └── sampler.py        # greedy / top-k（待实现）
+│   └── sampler.py        # greedy / top-k（待实现）  
 ├── server/
 │   └── api.py            # OpenAI 兼容 API（待实现）
 └── engine.py             # 引擎主循环（待实现）

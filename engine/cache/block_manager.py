@@ -18,14 +18,15 @@ class BlockManager:
         if n<0 or n%1!=0:raise ValueError(f"数值{n}不合法，数值必须为正整数。")
         if len(self.free_block)<n:
             raise MemoryError("内存资源不足。")
-        block_ids=set()
+        block_ids=[]
         for i in range(n):
             block=self.free_block.pop()
             self.used_block.add(block)
-            block_ids.add(block)
+            block_ids.append(block)
         return block_ids
 
     def free(self,block_ids):
+        block_ids=set(block_ids)
         if not block_ids.issubset(self.used_block): raise ValueError(f"已使用块表中不存在{block_ids}。")
         for block_id in block_ids:
             self.used_block.remove(block_id)

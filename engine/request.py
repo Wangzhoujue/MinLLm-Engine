@@ -32,4 +32,9 @@ class Request:
     def abort(self):
         if self.status!="ABORTED" and self.status!="FINISHED":
             self.status="ABORTED"
+
+    def finish(self):
+        if self.status=="RUNNING":
+            self.status="FINISHED"
+
         
