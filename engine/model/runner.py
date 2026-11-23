@@ -16,9 +16,9 @@ class ModelRunner():
         self.tokenizer=loader.load_tokenizer()
 
 
-    def prepare_input(self,req):
+    def prepare_input(self,prompt):
         if self.tokenizer is not None:
-            data=self.tokenizer(req,
+            data=self.tokenizer(prompt,
                                 return_tensors="pt",
                                 padding=True)
             prepared_input=data["input_ids"].to(self.device)

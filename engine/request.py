@@ -1,3 +1,5 @@
+
+import torch
 from dataclasses import dataclass, field
 
 @dataclass
@@ -5,9 +7,12 @@ class Request:
     request_id:int
     prompt:str
     max_tokens:int
-    prompt_token_ids:list[int]
+    prompt_token_ids:torch.Tensor#[batch,slen]
+    attention_mask:torch.Tensor
     output_token_ids:list[int]=field(default_factory=list)
     status:str="WAITING"
+    is_prefill: bool = True
+    error: str | None = None
 
     @property
     def generated_tokens(self):
@@ -20,9 +25,8 @@ class Request:
     def append_token(self, token_id):
         if self.status=="RUNNING":
             self.output_token_ids.append(token_id)
-            if self.is_finished: self.status="FINISHED"
         elif self.status=="WAITING":raise RuntimeError("该请求处于WAITING状态。")
-        elif self.status=="FINISHED":raise RuntimeError("该请求已达最大生成token数。")
+        elif self.status=="FINISHED":raise RuntimeError("该请求已完成。")
         elif self.status=="ABORTED": raise RuntimeError("该请求处于取消状态。")
 
     def start(self):

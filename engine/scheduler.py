@@ -22,17 +22,20 @@ class Scheduler:
             raise ValueError(f"请求{request.request_id}已存在于waiting队列。")
         if any(req.request_id==request.request_id  for req in self.running_queue):
             raise ValueError(f"请求{request.request_id}已存在于running队列。")
-
         self.waiting_queue.append(request)
 
     def calculate_num_blocks(self, request):
-            return ceil((len(request.prompt_token_ids)+request.max_tokens)/self.kv_cache.block_size)
+            return ceil((request.prompt_token_ids.shape[-1]+request.max_tokens)/self.kv_cache.block_size)
 
     def schedule(self):
         if len(self.waiting_queue)==0:
             return
         request=self.waiting_queue.popleft()
         num_block=self.calculate_num_blocks(request)
+        if num_block > self.block_manager.num_block:
+            request.abort()
+            request.error = "所需 KV Cache Block 数量超过总容量。"
+            return
         try:
             block_ids=self.block_manager.allocate(num_block)
             for block_id in block_ids:
@@ -43,6 +46,10 @@ class Scheduler:
             return  
         self.running_queue.append(request)
 
+    def get_next_request(self):
+        request=self.running_queue.popleft()
+        self.running_queue.append(request)
+        return request
 
     def _release_running_request(self, request):
         block_ids=self.block_table.get_blocks(request.request_id)
