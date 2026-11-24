@@ -4,7 +4,7 @@
 
 目标是吃透 vLLM 的两项核心设计——**PagedAttention（分页 KV 缓存）** 与 **Continuous Batching（连续批处理）**，最终做出一个能同时服务多个请求的小推理引擎，并与参考实现做对照测试和吞吐 / 延迟基准。
 
-当前进度：**单请求端到端生成已经跑通**（`Engine.generate()` 能真实输出文本），分页 KV / 块管理 / 调度器骨架均已实现；多请求并发组批、自研 KV 接入计算、采样器与 HTTP API 仍是下一步。
+当前进度：**单请求端到端生成已经跑通**（`Engine.generate()` 能真实输出文本），分页 KV / 块管理 / 调度器骨架、以及 greedy / random / top-k / top-p 采样均已实现；多请求并发组批、自研 KV 接入计算与 HTTP API 仍是下一步。
 
 ## 架构
 
@@ -19,10 +19,10 @@
     ModelRunner(prefill / decode) ◀──▶ KVCache(分页 KV 存储)
          │
          ▼
-      Sampler（当前为 engine.step 内联 argmax）
+      Sampler(greedy / random / top-k / top-p)
 ```
 
-数据流：`Engine.add_request` 先做 tokenize 拿到 `prompt_token_ids` 与 `attention_mask`，封装成 `Request` 交给 `Scheduler` 排队；`Engine.step` 每次让调度器挑一个请求，按预估所需块数向 `BlockManager` 申请物理块并写入 `BlockTable`，随后走一次 prefill 或 decode 前向，取最后一个位置的 logits 做 argmax 得到一个 token，直到达到 `max_tokens` 或命中 EOS 才释放块。
+数据流：`Engine.add_request` 先做 tokenize 拿到 `prompt_token_ids` 与 `attention_mask`，封装成 `Request` 交给 `Scheduler` 排队；`Engine.step` 每次让调度器挑一个请求，按预估所需块数向 `BlockManager` 申请物理块并写入 `BlockTable`，随后走一次 prefill 或 decode 前向，取最后一个位置的 logits 交给 `Sampler` 采样出下一个 token，直到达到 `max_tokens` 或命中 EOS 才释放块。
 
 ## 目录结构
 
@@ -38,7 +38,7 @@ engine/
 ├── request.py            # 请求状态机：WAITING → RUNNING → FINISHED / ABORTED
 ├── scheduler.py          # 等待 / 运行队列、块计算与分配、结束释放
 ├── sampling/
-│   └── sampler.py        # greedy / top-k（待实现，当前逻辑内联在 engine.step）
+│   └── sampler.py        # greedy / random / top-k / top-p 采样
 ├── server/
 │   └── api.py            # OpenAI 兼容 API（待实现）
 └── engine.py             # 引擎主循环：add_request / step / generate
@@ -61,11 +61,11 @@ examples/                 # 用法示例（待实现）
 - [x] `BlockTable`：请求到物理块的映射，拒绝重复添加同一物理块
 - [x] `Scheduler`：waiting / running 双队列、按 `prompt_len + max_tokens` 预估块数、结束与取消时释放块
 - [x] `Engine`：`add_request` / `step` / `generate`，单请求端到端生成可跑通
+- [x] `Sampler`：greedy / random / top-k / top-p 四种策略，已由 `Engine.step` 调用
 
 待实现：
 
 - [ ] 真正的连续批处理：当前 `schedule()` 每次只放行一个请求、`step()` 每次只推进一步，尚未把多个请求拼成一个 batch
-- [ ] `Sampler`：从 `engine.step` 中抽出，补上 greedy（已完成）/ top-k / temperature
 - [ ] 把自研 `KVCache` 接入前向计算：目前 KV 仍走 HF 的 `past_key_values`，分页缓存只做了分配与释放，尚未参与 attention
 - [ ] OpenAI 兼容 HTTP API
 - [ ] 单元测试补齐（`test_kv_cache.py`、`test_scheduler.py`、`test_concurrency.py` 目前为空）
@@ -101,6 +101,9 @@ uv run python tests/test_engine.py
 **Scheduler**
 `waiting_queue` / `running_queue` 两个 deque。`add_request` 会查重，防止同一 request_id 重复入队。块数按最坏情况预估：`ceil((prompt_len + max_tokens) / block_size)`，这样生成过程中不需要中途重新分配，代价是短请求也会占满其最大可能的块。分配不到块时（`MemoryError`）把请求 `appendleft` 回等待队列，而不是丢弃；整体容量都不够时直接 `abort` 并记录 `error`，让上层能拿到明确的失败原因。`finish_request` 先释放块再切状态，避免释放失败时状态已不可回滚。
 
+**Sampler**
+`sample()` 按 `strategy` 分发到四种实现：`greedy` 直接 argmax；`random` 用 `logits / temperature` 后 softmax，再 `multinomial` 采样；`top-k` 先 `topk` 取前 k 个，其余位置置 `-inf` 再走随机采样；`top-p`（核采样）按概率降序累积，把累积概率超过 p 的位置屏蔽，但强制保留最高概率项（`remove_mask[:, 0] = False`），避免阈值过小时整行被清空。非法策略、`temperature <= 0`、`top_k` 非正整数、`top_p` 越界都会直接抛 `ValueError`。
+
 **Engine**
 `step()` 是核心：prefill 阶段直接喂 `prompt_token_ids`（带 attention_mask）；decode 阶段只喂上一个 token、把 mask 尾部追加一位，并复用 `kv_cache[request_id]` 里的 `past_key_values`。每步结束把新的 `past_key_values` 存回字典，请求结束后删除条目，防止显存泄漏。`generate()` 用 `while request.status in ("WAITING", "RUNNING")` 自旋推进，直到该请求结束再解码输出。
 
@@ -108,14 +111,14 @@ uv run python tests/test_engine.py
 
 1. `schedule()` 支持多请求组批 + `step()` 一次推进整批（连续批处理的核心）
 2. 自研 `KVCache` 接入 attention，替换 HF 的 `past_key_values`
-3. 抽出 `Sampler`，补 top-k / temperature
+3. 采样参数打通到请求边界（目前 `Engine.step` 固定用默认 greedy，尚未按请求透传 `strategy` / `temperature` / `top_k` / `top_p`）
 4. OpenAI 兼容 API
 5. 对照测试 + Benchmark（吞吐 / TTFT / 显存）
 
 ## 已知事项
 
 - `pyproject.toml` 目前只声明了 `accelerate`，`torch` / `transformers` 需自行安装（待补进依赖并区分 CPU / CUDA 版本）。
-- `engine/` 下没有 `__init__.py`，`engine/server/__init__.py` 里还用了 `from request import ...` 这类绝对导入，直接当包导入会失败，需要改成相对导入并补齐包结构。
+- 顶层 `engine/` 缺 `__init__.py`（`cache` / `model` / `sampling` / `server` 子包已有），且 `engine/server/__init__.py` 用的是 `from request import Request` / `from scheduler import Scheduler` / `from engine.engine import Engine` 这类绝对导入，直接当包导入会失败，需要改成相对导入并补齐顶层包结构。
 - `tests/test_model_runner.py` 是重构前写的，调用的 `runner.load_model()` 已不存在，目前无法运行。
 - `Engine` 的 `step()` 每次只处理一个请求，距离真正的 batch 推理还有一段距离。
 - `ModelRunner` 把整个模型跑在 `device` 上，`attention_mask` 每步都在 CPU / GPU 间搬运，后续可优化。
