@@ -4,11 +4,13 @@ from dataclasses import dataclass, field
 from .model import ModelRunner
 from .scheduler import Scheduler
 from .request import Request
+from .sampling import Sampler
 
 @dataclass
 class Engine:
     model_runner:ModelRunner
     scheduler:Scheduler
+    sampler: Sampler = field(default_factory=Sampler)
     request_counter:int=0
     kv_cache :dict=field(default_factory=dict)
 
@@ -41,7 +43,7 @@ class Engine:
             attention_mask=request.attention_mask.to(self.model_runner.device)
             outputs=self.model_runner.forward(input_ids,attention_mask,self.kv_cache[request.request_id])
         next_token_logits=outputs.logits[:,-1,:]
-        next_token=torch.argmax(next_token_logits,dim=-1)
+        next_token=self.sampler.sample(next_token_logits)
         request.append_token(next_token.item())
         request.is_prefill=False
         self.kv_cache[request.request_id]=outputs.past_key_values
