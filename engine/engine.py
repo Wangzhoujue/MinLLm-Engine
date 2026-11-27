@@ -27,7 +27,7 @@ class Engine:
         self.request_counter+=1
         return request
 
-    def step(self):
+    def step(self,temperature=None):
         self.scheduler.schedule()
         if not self.scheduler.running_queue:
             return
@@ -43,23 +43,32 @@ class Engine:
             attention_mask=request.attention_mask.to(self.model_runner.device)
             outputs=self.model_runner.forward(input_ids,attention_mask,self.kv_cache[request.request_id])
         next_token_logits=outputs.logits[:,-1,:]
-        next_token=self.sampler.sample(next_token_logits)
+        if temperature is None:
+            next_token=self.sampler.sample(next_token_logits)
+        else:
+            next_token=self.sampler.sample(next_token_logits,temperature=temperature)
         request.append_token(next_token.item())
         request.is_prefill=False
         self.kv_cache[request.request_id]=outputs.past_key_values
-        if request.is_finished or next_token.item()==self.model_runner.tokenizer.eos_token_id:
+        if next_token.item()==self.model_runner.tokenizer.eos_token_id:
+            request.finish_reason="stop"
+            self.scheduler.finish_request(request)
+            del self.kv_cache[request.request_id]
+        elif request.is_finished :
+            request.finish_reason="length"
             self.scheduler.finish_request(request)
             del self.kv_cache[request.request_id]
 
-    def generate(self,prompt,max_tokens):
+
+    def generate(self,prompt,max_tokens,temperature=None):
         request=self.add_request(prompt,max_tokens)
         while request.status in ("WAITING", "RUNNING"):
-            self.step()
+            self.step(temperature)
         if request.status == "ABORTED":
             raise RuntimeError(request.error)
         outputs=self.model_runner.tokenizer.decode(request.output_token_ids,
-                                                   skip_special_tokens=True)
-        return outputs
+                                                skip_special_tokens=True)
+        return outputs,request.finish_reason,len(request.prompt_token_ids),len(request.output_token_ids)
 
 
             

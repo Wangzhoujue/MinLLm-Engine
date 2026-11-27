@@ -11,9 +11,9 @@ class ModelRunner():
         self.model=None
         self.tokenizer=None
 
-        loader=ModelLoader(self.model_path,self.device,self.dtype)
-        self.model=loader.load_model()
-        self.tokenizer=loader.load_tokenizer()
+        self.loader=ModelLoader(self.model_path,self.device,self.dtype)
+        self.model=self.loader.load_model()
+        self.tokenizer=self.loader.load_tokenizer()
 
 
     def prepare_input(self,prompt):

@@ -1,5 +1,6 @@
 
 import torch
+from typing import Literal
 from dataclasses import dataclass, field
 
 @dataclass
@@ -9,6 +10,7 @@ class Request:
     max_tokens:int
     prompt_token_ids:torch.Tensor#[batch,slen]
     attention_mask:torch.Tensor
+    finish_reason:Literal["stop","length","abort","error"]=" "
     output_token_ids:list[int]=field(default_factory=list)
     status:str="WAITING"
     is_prefill: bool = True
