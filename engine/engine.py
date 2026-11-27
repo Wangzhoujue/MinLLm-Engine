@@ -5,6 +5,7 @@ from .model import ModelRunner
 from .scheduler import Scheduler
 from .request import Request
 from .sampling import Sampler
+from .detokenizer import Detokenizer
 
 @dataclass
 class Engine:
@@ -69,6 +70,34 @@ class Engine:
         outputs=self.model_runner.tokenizer.decode(request.output_token_ids,
                                                 skip_special_tokens=True)
         return outputs,request.finish_reason,len(request.prompt_token_ids),len(request.output_token_ids)
+
+    def generate_stream(self,prompt,max_tokens):
+        detokenizer=Detokenizer(self.model_runner.tokenizer)
+        request=self.add_request(prompt,max_tokens)
+        num_token=0
+        while request.status in ("WAITING", "RUNNING"):
+            self.step()
+            if len(request.output_token_ids)<=num_token:continue
+            token=request.output_token_ids[num_token:]
+            num_token+=len(token)
+            for token_id in token:
+                text=detokenizer.push(token_id)
+                if text:
+                    yield { "text": text,
+                            "completion_tokens": len(request.output_token_ids),
+                            "finish_reason":None}
+        if request.status == "ABORTED":
+            raise RuntimeError(request.error)
+        text=detokenizer.flush()
+        if text:
+            yield {"text": text,
+                "finish_reason":None}
+        yield { "text": None,
+                "completion_tokens": len(request.output_token_ids),
+                "finish_reason":request.finish_reason}
+        
+
+
 
 
             
