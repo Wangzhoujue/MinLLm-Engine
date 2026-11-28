@@ -13,6 +13,8 @@ class Detokenizer:
     def push(self, token_id) -> str:
         self.token_ids.append(token_id)
         self.decoded_text=self.tokenizer.decode(self.token_ids)
+        if self.decoded_text.endswith("\ufffd"):
+            return ""
         if self.decoded_text.startswith(self.emitted_text):
             text=self.decoded_text[len(self.emitted_text):]
             self.emitted_text=self.decoded_text

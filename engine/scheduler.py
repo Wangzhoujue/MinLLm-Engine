@@ -30,16 +30,24 @@ class Scheduler:
     def schedule(self):
         if len(self.waiting_queue)==0:
             return
-        request=self.waiting_queue.popleft()
-        if request.status == "ABORTED":
-            return
-        num_block=self.calculate_num_blocks(request)
-        if num_block > self.block_manager.num_block:
+        need=self.calculate_num_blocks(self.waiting_queue[0])
+        if need > self.block_manager.num_block:
+            request=self.waiting_queue.popleft()
             request.abort()
+            request.finish_reason="error"
             request.error = "所需 KV Cache Block 数量超过总容量。"
             return
+
+        if need> len(self.block_manager.free_block):
+            return
+        
+        request=self.waiting_queue.popleft()
+
+        if request.status == "ABORTED":
+            return
+        
         try:
-            block_ids=self.block_manager.allocate(num_block)
+            block_ids=self.block_manager.allocate(need)
             for block_id in block_ids:
                 self.block_table.add_block(request.request_id,block_id)
             request.start()
