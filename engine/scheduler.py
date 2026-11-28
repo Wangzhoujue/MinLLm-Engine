@@ -81,9 +81,9 @@ class Scheduler:
     def abort_request(self,request):
         if any(req.request_id==request.request_id  for req in self.running_queue) :
             request.abort()
-            self.release_request(request)
         if any(req.request_id==request.request_id  for req in self.waiting_queue):
             request.abort()
+            self.release_request(request)
 
 
 
