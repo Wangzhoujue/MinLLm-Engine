@@ -31,6 +31,8 @@ class Scheduler:
         if len(self.waiting_queue)==0:
             return
         request=self.waiting_queue.popleft()
+        if request.status == "ABORTED":
+            return
         num_block=self.calculate_num_blocks(request)
         if num_block > self.block_manager.num_block:
             request.abort()
@@ -75,6 +77,13 @@ class Scheduler:
             self.release_request(request)
             request.finish()
         else: raise ValueError("请求状态不合法。") 
+
+    def abort_request(self,request):
+        if any(req.request_id==request.request_id  for req in self.running_queue) :
+            request.abort()
+            self.release_request(request)
+        if any(req.request_id==request.request_id  for req in self.waiting_queue):
+            request.abort()
 
 
 

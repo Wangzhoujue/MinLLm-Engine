@@ -15,7 +15,7 @@ from engine.model.runner import ModelRunner,ModelLoader
 from engine.cache.kv_cache import KVCache
 from engine.cache.block_manager import BlockManager
 from engine.cache.block_table import BlockTable
-from .schemas import ChatMessage,ChatCompletionRequest,ChatCompletionMessage,ChatCompletionChoice,UsageInfo,ChatCompletionResponse,ChatCompletionDelta,ChatCompletionChunkChoice,ChatCompletionChunk
+from .schemas import ChatCompletionRequest,ChatCompletionMessage,ChatCompletionChoice,UsageInfo,ChatCompletionResponse,ChatCompletionDelta,ChatCompletionChunkChoice,ChatCompletionChunk
 
 def create_app(model_path,device,dtype):
     @asynccontextmanager

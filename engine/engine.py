@@ -28,11 +28,19 @@ class Engine:
         self.request_counter+=1
         return request
 
+    def abort_request(self, request):
+        self.scheduler.abort_request(request)
+
     def step(self,temperature=None):
         self.scheduler.schedule()
         if not self.scheduler.running_queue:
             return
         request=self.scheduler.get_next_request()
+        if request.status=="ABORTED":
+            self.scheduler.release_request(request)
+            self.kv_cache.pop(request.request_id, None)
+            return
+        
         if request.is_prefill:
             input_ids=request.prompt_token_ids.to(self.model_runner.device)
             attention_mask=request.attention_mask.to(self.model_runner.device)
@@ -44,6 +52,12 @@ class Engine:
             attention_mask=request.attention_mask.to(self.model_runner.device)
             outputs=self.model_runner.forward(input_ids,attention_mask,self.kv_cache[request.request_id])
         next_token_logits=outputs.logits[:,-1,:]
+
+        if request.status=="ABORTED":
+            self.scheduler.release_request(request)
+            self.kv_cache.pop(request.request_id, None)
+            return
+
         if temperature is None:
             next_token=self.sampler.sample(next_token_logits)
         else:
@@ -51,14 +65,10 @@ class Engine:
         request.append_token(next_token.item())
         request.is_prefill=False
         self.kv_cache[request.request_id]=outputs.past_key_values
-        if next_token.item()==self.model_runner.tokenizer.eos_token_id:
-            request.finish_reason="stop"
+
+        if request.is_finished(next_token.item(),self.model_runner.tokenizer.eos_token_id):
             self.scheduler.finish_request(request)
-            del self.kv_cache[request.request_id]
-        elif request.is_finished :
-            request.finish_reason="length"
-            self.scheduler.finish_request(request)
-            del self.kv_cache[request.request_id]
+            self.kv_cache.pop(request.request_id, None)
 
 
     def generate(self,prompt,max_tokens,temperature=None):
